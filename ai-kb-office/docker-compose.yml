@@ -1,0 +1,52 @@
+# 一键拉起全套服务（任务 T0.2）：PostgreSQL + pgvector + 后端 + 前端
+# 用法：docker compose up   （首次会构建后端镜像）
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    container_name: ai_kb_db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: ai_kb
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d ai_kb"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    container_name: ai_kb_backend
+    env_file:
+      - ./backend/.env
+    environment:
+      # 容器内通过服务名 db 访问数据库
+      DATABASE_URL: postgresql+psycopg://postgres:postgres@db:5432/ai_kb
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./storage:/app/storage
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    image: node:24-alpine
+    container_name: ai_kb_frontend
+    working_dir: /app
+    environment:
+      VITE_API_BASE: http://localhost:8000
+    volumes:
+      - ./frontend:/app
+    ports:
+      - "5173:5173"
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+
+volumes:
+  pgdata:
