@@ -1,47 +1,49 @@
 # =============================================================
-# Docker Desktop 加速下载 + 自动安装 + 国内镜像加速（Windows 11）
-# 用法：管理员 PowerShell 执行
+# Docker Desktop: fast download + auto install + CN registry mirror
+# Works on Windows 11 with PowerShell 5.1 and PowerShell 7.x
+# (ASCII-only on purpose: avoids GBK/UTF-8 mojibake on PS 5.1)
+# Usage (Admin PowerShell):
 #   powershell -ExecutionPolicy Bypass -File .\scripts\install-docker-desktop.ps1
-# 或直接双击根目录的 install-docker-desktop.bat
+# Or just double-click install-docker-desktop.bat in the project root.
 # =============================================================
 
 $ErrorActionPreference = 'Stop'
 
-function Info($m) { Write-Host "[信息] $m" -ForegroundColor Cyan }
-function Ok($m)   { Write-Host "[完成] $m" -ForegroundColor Green }
-function Warn($m) { Write-Host "[注意] $m" -ForegroundColor Yellow }
-function Fail($m) { Write-Host "[错误] $m" -ForegroundColor Red }
+function Info($m) { Write-Host "[INFO] $m" -ForegroundColor Cyan }
+function Ok($m)   { Write-Host "[ OK ] $m" -ForegroundColor Green }
+function Warn($m) { Write-Host "[WARN] $m" -ForegroundColor Yellow }
+function Fail($m) { Write-Host "[FAIL] $m" -ForegroundColor Red }
 
-# ---------- 0. 管理员权限（自动提权） ----------
+# ---------- 0. Admin check (auto elevate) ----------
 $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
-    Warn "需要管理员权限，正在以管理员身份重新启动本脚本..."
+    Warn "Administrator rights required. Re-launching elevated..."
     Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
         '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`""
     )
     exit 0
 }
 
-# ---------- 1. 检查 WSL2（Docker Desktop 前置依赖） ----------
-Info "检查 WSL2 状态..."
+# ---------- 1. Check WSL2 (prerequisite of Docker Desktop) ----------
+Info "Checking WSL2 status ..."
 $hasWsl = [bool](Get-Command wsl -ErrorAction SilentlyContinue)
 if (-not $hasWsl) {
-    Warn "未检测到 WSL，正在执行 wsl --install（完成后需要重启电脑）..."
+    Warn "WSL not found. Running: wsl --install (a reboot is required afterwards)"
     wsl --install
-    Fail "WSL 安装已触发，请【重启电脑】后再次运行本脚本。"
+    Fail "WSL install triggered. Please REBOOT the PC, then run this script again."
     exit 0
 }
 wsl --status *> $null
 if ($LASTEXITCODE -ne 0) {
-    Warn "WSL 尚未正确初始化，正在执行 wsl --install ..."
+    Warn "WSL is not initialized yet. Running: wsl --install ..."
     wsl --install
-    Fail "请【重启电脑】后再次运行本脚本。"
+    Fail "Please REBOOT the PC, then run this script again."
     exit 0
 }
-Ok "WSL2 已就绪"
+Ok "WSL2 is ready"
 
-# ---------- 2. 下载安装包（多镜像源自动重试） ----------
+# ---------- 2. Download installer (multi-mirror with retry) ----------
 $arch = $env:PROCESSOR_ARCHITECTURE
 if ($arch -eq 'ARM64') {
     $asset = 'docker_desktop_installer_windows_arm64.exe'
@@ -50,7 +52,7 @@ if ($arch -eq 'ARM64') {
 }
 $rawUrl = "https://github.com/tech-shrimp/docker_installer/releases/download/latest/$asset"
 
-# 依次尝试：国内加速代理 -> 官方直链
+# Try CN accelerator proxies first, then the official link
 $sources = @(
     "https://ghfast.top/$rawUrl",
     "https://ghproxy.net/$rawUrl",
@@ -62,12 +64,12 @@ $outDir = Join-Path $env:USERPROFILE 'Downloads'
 if (-not (Test-Path $outDir)) { $outDir = $env:TEMP }
 $outFile = Join-Path $outDir 'DockerDesktopInstaller.exe'
 
-Info "开始下载 Docker Desktop 安装包（约 620MB，支持断点续传）..."
-Info "保存位置：$outFile"
+Info "Downloading Docker Desktop installer (about 620MB, resumable) ..."
+Info "Save to: $outFile"
 
 $downloaded = $false
 foreach ($url in $sources) {
-    Info "尝试下载源：$url"
+    Info "Trying source: $url"
     if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
         & curl.exe -L -C - --retry 3 --retry-delay 3 --connect-timeout 20 -o "$outFile" "$url"
     } else {
@@ -76,39 +78,39 @@ foreach ($url in $sources) {
     if (Test-Path $outFile) {
         $sizeMB = (Get-Item $outFile).Length / 1MB
         if ($sizeMB -gt 300) {
-            Ok ("下载完成：{0:N1} MB" -f $sizeMB)
+            Ok ("Download complete: {0:N1} MB" -f $sizeMB)
             $downloaded = $true
             break
         }
-        Warn ("该源文件偏小（{0:N1} MB），换下一个源" -f $sizeMB)
+        Warn ("File too small from this source ({0:N1} MB), trying next" -f $sizeMB)
         Remove-Item $outFile -Force -ErrorAction SilentlyContinue
     } else {
-        Warn "该源下载失败，换下一个源"
+        Warn "Download failed from this source, trying next"
     }
 }
 if (-not $downloaded) {
-    Fail "所有下载源均失败。请用浏览器/迅雷手动打开以下任意地址下载，再双击安装："
+    Fail "All download sources failed. Download manually with a browser or Thunder from any of:"
     foreach ($u in $sources) { Write-Host "  $u" }
     exit 1
 }
 
-# ---------- 3. 静默安装 ----------
-Info "开始安装 Docker Desktop（静默模式 / 接受许可协议 / WSL2 后端）..."
+# ---------- 3. Silent install ----------
+Info "Installing Docker Desktop (silent, accept license, WSL2 backend) ..."
 Start-Process -FilePath $outFile -Wait -ArgumentList @(
     'install', '--quiet', '--accept-license', '--backend=wsl-2'
 )
-Ok "Docker Desktop 安装完成"
+Ok "Docker Desktop installed"
 
-# ---------- 4. 配置国内镜像加速器 ----------
-Info "配置国内镜像加速器（registry-mirrors）..."
+# ---------- 4. Configure CN registry mirrors ----------
+Info "Configuring CN registry mirrors ..."
 $cfgDir = Join-Path $env:USERPROFILE '.docker'
 New-Item -ItemType Directory -Force -Path $cfgDir | Out-Null
 $cfgFile = Join-Path $cfgDir 'daemon.json'
 $config = @{ 'registry-mirrors' = @('https://docker.m.daocloud.io', 'https://docker.1panel.live') }
 Set-Content -Path $cfgFile -Value ($config | ConvertTo-Json -Depth 5) -Encoding UTF8
-Ok "已写入加速器配置：$cfgFile"
+Ok "Mirror config written: $cfgFile"
 
 Write-Host ""
-Ok "全部完成。请手动打开 Docker Desktop，等任务栏图标变为绿色(Running)后，执行："
+Ok "All done. Open Docker Desktop manually, wait until its icon turns green (Running), then run:"
 Write-Host "     .\scripts\start.ps1" -ForegroundColor Cyan
-Warn "若加速器未生效：Docker Desktop -> Settings -> Docker Engine，确认其中包含上面的 registry-mirrors 内容后 Apply & Restart"
+Warn "If mirrors do not take effect: Docker Desktop -> Settings -> Docker Engine, make sure the registry-mirrors above are present, then click Apply and Restart."
