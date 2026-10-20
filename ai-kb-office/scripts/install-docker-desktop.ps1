@@ -19,8 +19,9 @@ $principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIde
 $isAdmin = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 if (-not $isAdmin) {
     Warn "Administrator rights required. Re-launching elevated..."
-    Start-Process -FilePath 'powershell.exe' -Verb RunAs -ArgumentList @(
-        '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`""
+    Warn "A new Administrator window will open and STAY OPEN when finished."
+    Start-Process -FilePath 'powershell.exe' -Verb RunAs -WorkingDirectory $PSScriptRoot -ArgumentList @(
+        '-NoProfile', '-NoExit', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSCommandPath`""
     )
     exit 0
 }
